@@ -10,10 +10,21 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Vulkan SDK
+    - name: Install Chocolatey (if missing)
+      shell: powershell
       run: |
-        curl -LO https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
-        start /wait vulkan-sdk.exe /S
+        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+        }
+
+    - name: Install Vulkan SDK (choco)
+      shell: powershell
+      run: |
+        choco install -y vulkan-sdk
+        $vpath = Get-ChildItem 'C:\VulkanSDK' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        echo "VULKAN_SDK=${vpath.FullName}" >> $env:GITHUB_ENV
+        echo "PATH=${vpath.FullName}\Bin;${env:PATH}" >> $env:GITHUB_ENV
 
     - name: Install CMake
       uses: lukka/get-cmake@latest
