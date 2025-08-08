@@ -1,60 +1,48 @@
-# .github/workflows/build-vulkan.yml
-name: Build Whisper Vulkan (Windows\Choco)
+name: Build Whisper Vulkan (choco\Windows)
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
-  build:
-    # Run on multiple Windows host labels so you detect runner-image differences early
-    strategy:
-      matrix:
-        os: [windows-latest, windows-2022]
-
-    runs-on: ${{ matrix.os }}
-    env:
-      CMAKE_GENERATOR: "Visual Studio 17 2022"
-      CMAKE_GENERATOR_PLATFORM: "x64"
+  build-windows:
+    runs-on: windows-2022 # safer until 2025 migration is stable
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Chocolatey (if missing)
-        shell: powershell
-        run: |
-          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-          }
+      - name: Install CMake
+        uses: jwlawson/actions-setup-cmake@v1
+        with:
+          cmake-version: '3.28.3'
 
-      - name: Install Vulkan SDK (choco) with retry
-        shell: powershell
+      - name: Install Vulkan SDK (latest)
+        shell: pwsh
         run: |
-          $tries = 0
-          $max = 3
-          while ($tries -lt $max) {
-            $tries++
-            try {
-              choco install -y vulkan-sdk --no-progress
-              break
-            } catch {
-              Write-Host "choco install failed (attempt $tries/$max): $_"
-              if ($tries -ge $max) { throw "choco install failed after $max attempts" }
-              Start-Sleep -Seconds (10 * $tries)
-            }
-          }
-          # export the installed SDK path for later steps
-          $vpath = Get-ChildItem 'C:\VulkanSDK' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $vpath) { Write-Host "No VulkanSDK folder found"; exit 1 }
-          echo "VULKAN_SDK=${vpath.FullName}" >> $env:GITHUB_ENV
-          echo "PATH=${vpath.FullName}\Bin;${env:PATH}" >> $env:GITHUB_ENV
+          # Get the latest Vulkan SDK version dynamically
+          $latestUrl = "https://vulkan.lunarg.com/sdk/latest/windows.txt"
+          $latestVersion = (Invoke-WebRequest -Uri $latestUrl -UseBasicParsing).Content.Trim()
+          Write-Host "Latest Vulkan SDK version: $latestVersion"
 
-      - name: Install CMake (stable)
-        uses: lukka/get-cmake@v2
+          $installerUrl = "https://sdk.lunarg.com/sdk/download/$latestVersion/windows/VulkanSDK-$latestVersion-Installer.exe"
+          Invoke-WebRequest -Uri $installerUrl -OutFile vulkan-sdk.exe
 
-      - name: Show environment & toolchain (debug)
-        shell: powershell
-        run: |
-          echo "=== Environment ==="
-          echo "RU
+          # Silent install
+          Start-Process ".\vulkan-sdk.exe" -ArgumentList "/S" -Wait
+
+          # Set environment variables
+          $vulkanPath = "C:\VulkanSDK\$latestVersion"
+          echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+          echo "$vulkanPath\Bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+          echo "$vulkanPath\Lib" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: Configure CMake
+        run: cmake -S . -B build -A x64 -DWHISPER_VULKAN=ON
+
+      - name: Build
+        run: cmake --build build --config Release
