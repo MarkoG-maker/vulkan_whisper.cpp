@@ -28,4 +28,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: whisper-vulkan-windows
-        path: build/bin/Release/*
+        path: build/bin/Release/**
