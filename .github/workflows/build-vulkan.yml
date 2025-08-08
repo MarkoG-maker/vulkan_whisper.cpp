@@ -1,0 +1,31 @@
+name: Build Whisper Vulkan (Windows)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Vulkan SDK
+      run: |
+        curl -LO https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+        start /wait vulkan-sdk.exe /S
+
+    - name: Install CMake
+      uses: lukka/get-cmake@latest
+
+    - name: Configure CMake (Vulkan)
+      run: cmake -B build -DWHISPER_VULKAN=ON
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: whisper-vulkan-windows
+        path: build/bin/Release/**
