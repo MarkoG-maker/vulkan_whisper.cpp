@@ -1,4 +1,5 @@
-name: Build Whisper Vulkan (Windows)
+# .github/workflows/build-vulkan.yml
+name: Build Whisper Vulkan (Windows\Chocolatey)
 
 on:
   workflow_dispatch:
@@ -6,37 +7,84 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # CMake generator to use on the hosted runner
+      CMAKE_GENERATOR: "Visual Studio 17 2022"
+      CMAKE_GENERATOR_PLATFORM: "x64"
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install Chocolatey (if missing)
-      shell: powershell
-      run: |
-        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-        }
+      - name: Install Chocolatey (if missing)
+        shell: powershell
+        run: |
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+          }
 
-    - name: Install Vulkan SDK (choco)
-      shell: powershell
-      run: |
-        choco install -y vulkan-sdk
-        $vpath = Get-ChildItem 'C:\VulkanSDK' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        echo "VULKAN_SDK=${vpath.FullName}" >> $env:GITHUB_ENV
-        echo "PATH=${vpath.FullName}\Bin;${env:PATH}" >> $env:GITHUB_ENV
+      - name: Install Vulkan SDK (choco)
+        shell: powershell
+        run: |
+          choco install -y vulkan-sdk
+          # Determine the newest installed Vulkan SDK path and expose it to subsequent steps
+          $vpath = Get-ChildItem 'C:\VulkanSDK' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          echo "VULKAN_SDK=${vpath.FullName}" >> $env:GITHUB_ENV
+          echo "PATH=${vpath.FullName}\Bin;${env:PATH}" >> $env:GITHUB_ENV
 
-    - name: Install CMake
-      uses: lukka/get-cmake@latest
+      - name: Install CMake
+        uses: lukka/get-cmake@v3
 
-    - name: Configure CMake (Vulkan)
-      run: cmake -B build -DWHISPER_VULKAN=ON
+      - name: Show environment & toolchain (debug)
+        shell: powershell
+        run: |
+          echo "VULKAN_SDK=$env:VULKAN_SDK"
+          cmake --version
+          where cl || echo "cl (MSVC) not found"
+          where cmake
 
-    - name: Build
-      run: cmake --build build --config Release
+      - name: Configure CMake (Vulkan ON)
+        shell: powershell
+        run: |
+          cmake -S . -B build -G "%CMAKE_GENERATOR%" -A x64 -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 
-    - name: Upload build artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: whisper-vulkan-windows
-        path: build/bin/Release/**
+      - name: Build Release
+        shell: powershell
+        run: |
+          cmake --build build --config Release --target ALL_BUILD -- /m:2
+
+      - name: List build outputs (debug)
+        shell: powershell
+        run: |
+          Write-Host "---- listing possible output directories ----"
+          Get-ChildItem -Recurse -Force build | Where-Object { $_.Extension -in '.exe', '.dll', '.pdb' } | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Collect built binaries (prepare artifact)
+        shell: powershell
+        run: |
+          # create a staging dir and copy common possible binary locations into it
+          $out = "artifact"
+          Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $out | Out-Null
+          $candidates = @(
+            "build\\bin\\Release\\*",
+            "build\\bin\\*",
+            "build\\Release\\*",
+            "build\\*\\Release\\*",
+            "build\\whisper.exe",
+            "build\\bin\\whisper.exe"
+          )
+          foreach ($p in $candidates) {
+            Get-ChildItem -Path $p -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination $out -Force
+            }
+          }
+          Write-Host "Files staged for artifact:"
+          Get-ChildItem -Path $out -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-vulkan-windows
+          path: artifact/**
