@@ -1,48 +1,60 @@
-name: Build Whisper Vulkan (choco\Windows)
+name: Build Vulkan Project
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
   pull_request:
-    branches:
-      - master
+    branches: [ master ]
 
 jobs:
-  build-windows:
-    runs-on: windows-2022 # safer until 2025 migration is stable
+  build:
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout code
+      # Step 1: Checkout source code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Step 2: Install CMake via Chocolatey
       - name: Install CMake
-        uses: jwlawson/actions-setup-cmake@v1
-        with:
-          cmake-version: '3.28.3'
+        run: choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' --yes
 
+      # Step 3: Install Vulkan SDK (latest)
       - name: Install Vulkan SDK (latest)
         shell: pwsh
         run: |
-          # Get the latest Vulkan SDK version dynamically
+          # Get the latest Vulkan SDK version number
           $latestUrl = "https://vulkan.lunarg.com/sdk/latest/windows.txt"
           $latestVersion = (Invoke-WebRequest -Uri $latestUrl -UseBasicParsing).Content.Trim()
           Write-Host "Latest Vulkan SDK version: $latestVersion"
 
-          $installerUrl = "https://sdk.lunarg.com/sdk/download/$latestVersion/windows/VulkanSDK-$latestVersion-Installer.exe"
+          # Correct URL pattern for Windows installer
+          $installerUrl = "https://sdk.lunarg.com/sdk/download/$latestVersion/windows/vulkansdk-$latestVersion-installer.exe"
+          Write-Host "Downloading installer from: $installerUrl"
+
+          # Download installer
           Invoke-WebRequest -Uri $installerUrl -OutFile vulkan-sdk.exe
 
           # Silent install
           Start-Process ".\vulkan-sdk.exe" -ArgumentList "/S" -Wait
 
-          # Set environment variables
+          # Set environment variables for Vulkan
           $vulkanPath = "C:\VulkanSDK\$latestVersion"
+          Write-Host "Setting VULKAN_SDK path to: $vulkanPath"
           echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
           echo "$vulkanPath\Bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
-          echo "$vulkanPath\Lib" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
+      # Step 4: Configure the project with CMake
       - name: Configure CMake
-        run: cmake -S . -B build -A x64 -DWHISPER_VULKAN=ON
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
+      # Step 5: Build the project
       - name: Build
         run: cmake --build build --config Release
+
+      # Step 6: Upload build artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: build/**
